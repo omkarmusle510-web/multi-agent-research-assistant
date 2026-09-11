@@ -120,34 +120,10 @@ Respond strictly with valid JSON conforming to this schema:
                 "Continuously monitor emerging regulatory frameworks."
             ])
 
+            if not exec_summary:
+                raise ValueError("Groq returned report JSON without an executive summary.")
         except Exception as e:
-            logger.warning(f"Error parsing LLM report synthesis: {e}. Utilizing fallback report structure.")
-            exec_summary = (
-                f"This report presents a synthesized evaluation of {analysis.topic}. "
-                f"Based on empirical literature and cross-source analysis, current developments indicate rapid expansion "
-                f"accompanied by distinct governance and operational challenges."
-            )
-            sections = [
-                ReportSection(
-                    heading="Current Technological Landscape",
-                    content=f"Research across available sources indicates robust foundations for {analysis.topic}. Implementations demonstrate measurable performance gains, though legacy compatibility requires active mitigation [S1].",
-                    citations=["S1"]
-                ),
-                ReportSection(
-                    heading="Strategic & Economic Implications",
-                    content=f"Economic models suggest sustainable return on investment when scaling {analysis.topic}. Key barriers remain centered on initial resource allocation and standardization [S2].",
-                    citations=["S2"]
-                )
-            ]
-            key_findings = analysis.key_takeaways
-            conclusions = [
-                f"{analysis.topic} demonstrates strong viability across current benchmarks.",
-                "Balancing innovation speed with oversight is the primary organizational challenge."
-            ]
-            recommendations = [
-                "Implement phased rollouts to validate performance thresholds.",
-                "Standardize data and security review procedures."
-            ]
+            raise RuntimeError(f"Report Agent failed to parse Groq synthesis: {e}") from e
 
         final_report = FinalReport(
             topic=analysis.topic,

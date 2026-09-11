@@ -136,45 +136,11 @@ Respond strictly with valid JSON conforming to this schema:
                     resolution_or_assessment=cf.get("resolution_or_assessment", "Divergence stems from differing sector risk tolerances.")
                 ))
 
-            takeaways = parsed.get("key_takeaways", [
-                f"Core foundations of {packet.topic} are corroborated across literature.",
-                "Disagreements center on implementation timeline and scaling costs.",
-                "Comprehensive standard operating procedures are required."
-            ])
+            takeaways = parsed.get("key_takeaways", [])
+            if not findings:
+                raise ValueError("Groq returned analysis JSON with empty findings list.")
         except Exception as e:
-            logger.warning(f"Error parsing LLM analysis: {e}. Generating fallback findings.")
-            src_ids = [s.id for s in packet.sources] or ["S1"]
-            findings = [
-                Finding(
-                    theme=f"Operational Landscape of {packet.topic}",
-                    claims=[
-                        Claim(
-                            claim_id="C1",
-                            statement=f"Literature highlights significant momentum in {packet.topic}.",
-                            supporting_sources=src_ids[:2],
-                            confidence="High",
-                            evidence="Corroborated across primary research indices."
-                        )
-                    ],
-                    consensus_summary="General agreement on technical applicability."
-                )
-            ]
-            conflicts = [
-                Conflict(
-                    conflict_id="CF1",
-                    topic="Short-term Deployment vs Long-term Standardization",
-                    side_a="Immediate commercial pilots show viable early returns.",
-                    side_a_sources=src_ids[:1],
-                    side_b="Regulatory frameworks urge extensive safety benchmarking prior to widespread release.",
-                    side_b_sources=src_ids[1:2] if len(src_ids) > 1 else src_ids[:1],
-                    resolution_or_assessment="Pace is dictated by compliance and industry risk appetite."
-                )
-            ]
-            takeaways = [
-                f"Strong operational foundation established for {packet.topic}.",
-                "Near-term hurdles concentrate around governance and compliance integration.",
-                "Cross-institutional benchmarking will accelerate consensus."
-            ]
+            raise RuntimeError(f"Analysis Agent failed to parse Groq analysis: {e}") from e
 
         self._notify(
             "Evidence Assessment",

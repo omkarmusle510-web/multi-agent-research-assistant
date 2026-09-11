@@ -1,10 +1,13 @@
-"""Web search and information gathering tool with multiple backends and resilient fallback."""
+"""Real Tavily Web Search implementation (Layer 2).
+
+Provides live web search via the official Tavily Python SDK, mapping real web evidence
+into typed SourceDocument contracts with deterministic application-assigned source IDs
+and URL deduplication. No mock or fallback search providers.
+"""
 
 import logging
-import urllib.parse
-from typing import List, Optional
-import requests
-from bs4 import BeautifulSoup
+from typing import List, Optional, Set
+from tavily import TavilyClient
 
 from src.config import settings
 from src.models import SourceDocument
@@ -13,177 +16,137 @@ logger = logging.getLogger(__name__)
 
 
 class WebSearchTool:
-    """Multi-backend web search tool supporting DuckDuckGo, Tavily, and intelligent simulation."""
+    """Real web search tool powered exclusively by Tavily API."""
 
     def __init__(self):
-        self.tavily_api_key = settings.TAVILY_API_KEY
-        self.headers = {
-            "User-Agent": (
-                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                "AppleWebKit/537.36 (KHTML, like Gecko) "
-                "Chrome/124.0.0.0 Safari/537.36"
+        self._client: Optional[TavilyClient] = None
+
+    def _get_client(self) -> TavilyClient:
+        """Lazily initialize and return the Tavily client, validating credentials."""
+        settings.validate_tavily_credentials()
+        if self._client is None or self._client.api_key != settings.TAVILY_API_KEY:
+            self._client = TavilyClient(api_key=settings.TAVILY_API_KEY)
+        return self._client
+
+    def search(
+        self,
+        query: str,
+        max_results: Optional[int] = None,
+        start_id: int = 1,
+        seen_urls: Optional[Set[str]] = None,
+    ) -> List[SourceDocument]:
+        """Execute a live search query via Tavily and return validated SourceDocuments.
+        
+        Args:
+            query: The search query string.
+            max_results: Maximum results to return (bounded to settings.MAX_RESULTS_PER_QUERY).
+            start_id: Starting integer for assigning sequential source IDs (e.g. 1 -> S1).
+            seen_urls: Optional set of already-seen URLs to avoid duplication across queries.
+            
+        Returns:
+            List of SourceDocument instances with application-assigned IDs (S1, S2...).
+            
+        Raises:
+            ValueError: If TAVILY_API_KEY is missing or query is empty.
+            RuntimeError: If Tavily API call fails.
+        """
+        clean_query = query.strip()
+        if not clean_query:
+            raise ValueError("Search query cannot be empty.")
+
+        client = self._get_client()
+        limit = min(max_results or settings.MAX_RESULTS_PER_QUERY, 5)
+
+        logger.info(f"Executing real Tavily search for: '{clean_query}' (limit={limit})")
+
+        try:
+            raw_response = client.search(
+                query=clean_query,
+                max_results=limit,
+                search_depth="basic",
+                include_answer=False,
+                include_raw_content=False,
             )
-        }
-
-    def search(self, query: str, max_results: Optional[int] = None) -> List[SourceDocument]:
-        """Search the web for query and return structured SourceDocuments."""
-        limit = max_results or settings.MAX_RESULTS_PER_QUERY
-
-        # 1. Try Tavily (intended provider) if configured
-        if settings.has_tavily_credentials:
-            try:
-                results = self._search_tavily(query, limit)
-                if results:
-                    return results
-            except Exception as e:
-                logger.warning(f"Tavily search error ({e}), falling back.")
-
-        # 2. Fallback search / simulation
-        try:
-            results = self._search_duckduckgo(query, limit)
-            if results:
-                return results
         except Exception as e:
-            logger.warning(f"DuckDuckGo search error ({e}), falling back.")
+            error_msg = str(e)
+            if "unauthorized" in error_msg.lower() or "api key" in error_msg.lower():
+                raise RuntimeError(
+                    f"Tavily Authentication Error: Invalid or expired TAVILY_API_KEY. Details: {e}"
+                ) from e
+            raise RuntimeError(f"Tavily API request failed for query '{clean_query}': {e}") from e
 
-        # 3. Resilient simulated search results for offline/testing/demo
-        return self._simulate_search_results(query, limit)
-
-    def _search_duckduckgo(self, query: str, limit: int) -> List[SourceDocument]:
-        """Search DuckDuckGo using duckduckgo_search or HTML endpoint."""
-        # Check if duckduckgo_search library is installed
-        try:
-            from duckduckgo_search import DDGS
-            with DDGS() as ddgs:
-                ddg_gen = ddgs.text(query, max_results=limit)
-                documents: List[SourceDocument] = []
-                for i, r in enumerate(ddg_gen):
-                    doc = SourceDocument(
-                        id=f"S{i+1}",
-                        title=r.get("title", f"Result {i+1}"),
-                        url=r.get("href", r.get("link", f"https://duckduckgo.com/?q={urllib.parse.quote(query)}")),
-                        snippet=r.get("body", r.get("snippet", ""))[:400],
-                        relevance_score=max(0.65, 0.95 - (i * 0.08)),
-                        published_date="Recent"
-                    )
-                    documents.append(doc)
-                if documents:
-                    return documents
-        except Exception:
-            pass
-
-        # Fallback to direct HTTP scraping of DuckDuckGo HTML
-        url = f"https://html.duckduckgo.com/html/?q={urllib.parse.quote_plus(query)}"
-        resp = requests.get(url, headers=self.headers, timeout=8)
-        if resp.status_code != 200:
+        results = raw_response.get("results", [])
+        if not results:
+            logger.warning(f"Tavily returned 0 results for query: '{clean_query}'")
             return []
 
-        soup = BeautifulSoup(resp.text, "html.parser")
-        results = soup.find_all("div", class_="result")
-        documents: List[SourceDocument] = []
+        if seen_urls is None:
+            seen_urls = set()
 
-        for i, res in enumerate(results[:limit]):
-            title_tag = res.find("a", class_="result__a")
-            snippet_tag = res.find("a", class_="result__snippet")
+        documents: List[SourceDocument] = []
+        current_id_counter = start_id
+
+        for item in results:
+            url = item.get("url", "").strip()
+            if not url or url in seen_urls:
+                continue
+
+            seen_urls.add(url)
+            title = item.get("title", "").strip() or "Untitled Document"
+            snippet = item.get("content", "").strip()
+            published_date = item.get("published_date")
+            raw_score = item.get("score")
             
-            if title_tag:
-                title = title_tag.get_text(strip=True)
-                raw_href = title_tag.get("href", "")
-                
-                # Extract actual target link from DDG redirect url
-                clean_url = raw_href
-                if "uddg=" in raw_href:
-                    clean_url = urllib.parse.unquote(raw_href.split("uddg=")[-1].split("&")[0])
-                
-                snippet = snippet_tag.get_text(strip=True) if snippet_tag else "No snippet available."
-                doc = SourceDocument(
-                    id=f"S{i+1}",
-                    title=title,
-                    url=clean_url if clean_url.startswith("http") else f"https://duckduckgo.com{clean_url}",
-                    snippet=snippet[:400],
-                    relevance_score=max(0.60, 0.92 - (i * 0.07)),
-                    published_date="Recent"
-                )
-                documents.append(doc)
+            # Normalize relevance score between 0.0 and 1.0
+            relevance = 0.8
+            if raw_score is not None:
+                try:
+                    relevance = max(0.0, min(1.0, float(raw_score)))
+                except (ValueError, TypeError):
+                    relevance = 0.8
 
-        return documents
-
-    def _search_tavily(self, query: str, limit: int) -> List[SourceDocument]:
-        """Query Tavily Search API."""
-        url = "https://api.tavily.com/search"
-        payload = {
-            "api_key": self.tavily_api_key,
-            "query": query,
-            "max_results": limit,
-            "search_depth": "basic",
-        }
-        resp = requests.post(url, json=payload, timeout=12)
-        resp.raise_for_status()
-        data = resp.json()
-        
-        documents: List[SourceDocument] = []
-        for i, item in enumerate(data.get("results", [])):
             doc = SourceDocument(
-                id=f"S{i+1}",
-                title=item.get("title", f"Source {i+1}"),
-                url=item.get("url", ""),
-                snippet=item.get("content", "")[:400],
-                published_date=item.get("published_date", "Recent"),
-                relevance_score=item.get("score", 0.85)
-            )
-            documents.append(doc)
-        return documents
-
-    def _simulate_search_results(self, query: str, limit: int) -> List[SourceDocument]:
-        """Generate high-fidelity, grounded research sources for offline mode or fallback."""
-        clean_q = query.replace("+", " ").strip()
-        
-        samples = [
-            (
-                f"Comprehensive Benchmark and Analysis: {clean_q}",
-                f"https://www.techresearch-insights.org/reports/{urllib.parse.quote(clean_q.lower().replace(' ', '-'))}",
-                f"Empirical benchmark investigating {clean_q}. Evaluates core architectural performance, throughput, operational latency, and structural viability across standard production conditions.",
-                0.94,
-                "2026 Q1"
-            ),
-            (
-                f"Industry Trends, Economic Viability & Scalability of {clean_q}",
-                f"https://global-analyst-group.com/market-outlook/{urllib.parse.quote(clean_q.lower().replace(' ', '-'))}",
-                f"In-depth market overview examining commercial adoption curves and cost-efficiency trade-offs of {clean_q}. Highlights significant return on investment alongside initial onboarding bottlenecks.",
-                0.88,
-                "2025"
-            ),
-            (
-                f"Regulatory Perspectives and Critical Limitations in {clean_q}",
-                f"https://standards-and-governance.edu/papers/{urllib.parse.quote(clean_q.lower().replace(' ', '-'))}",
-                f"Critique of prevailing implementations in {clean_q}. Identifies unresolved safety concerns, compliance divergence across international bodies, and standardization priorities.",
-                0.82,
-                "2025 Q4"
-            ),
-            (
-                f"Next-Generation Architectures and Innovations in {clean_q}",
-                f"https://future-systems-journal.io/articles/{urllib.parse.quote(clean_q.lower().replace(' ', '-'))}",
-                f"Explores emerging paradigms in {clean_q}, outlining five-year roadmaps, next-generation integration patterns, and algorithmic breakthroughs.",
-                0.79,
-                "2026"
-            ),
-        ]
-
-        documents: List[SourceDocument] = []
-        for i, (title, url, snippet, score, pdate) in enumerate(samples[:limit]):
-            doc = SourceDocument(
-                id=f"S{i+1}",
+                id=f"S{current_id_counter}",
                 title=title,
                 url=url,
                 snippet=snippet,
-                relevance_score=score,
-                published_date=pdate
+                content=None,
+                published_date=str(published_date) if published_date else None,
+                relevance_score=relevance,
             )
             documents.append(doc)
+            current_id_counter += 1
 
         return documents
 
+    def search_bounded_queries(
+        self,
+        queries: List[str],
+        max_queries: Optional[int] = None,
+        max_results_per_query: Optional[int] = None,
+    ) -> List[SourceDocument]:
+        """Execute a bounded batch of queries, deduplicating across the batch.
+        
+        Enforces MAX_SEARCH_QUERIES (default 3) and MAX_RESULTS_PER_QUERY (default 3).
+        """
+        query_cap = min(max_queries or settings.MAX_SEARCH_QUERIES, len(queries))
+        per_query_limit = max_results_per_query or settings.MAX_RESULTS_PER_QUERY
 
-# Singleton search tool
+        bounded_queries = queries[:query_cap]
+        all_documents: List[SourceDocument] = []
+        seen_urls: Set[str] = set()
+
+        for q in bounded_queries:
+            docs = self.search(
+                query=q,
+                max_results=per_query_limit,
+                start_id=len(all_documents) + 1,
+                seen_urls=seen_urls,
+            )
+            all_documents.extend(docs)
+
+        return all_documents
+
+
+# Singleton search tool instance
 search_tool = WebSearchTool()
-

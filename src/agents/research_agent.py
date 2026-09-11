@@ -70,35 +70,30 @@ Respond strictly with valid JSON conforming to this schema:
                     rationale=q_dict.get("rationale", "Provide background context")
                 ))
             preliminary_summary = parsed.get("summary", f"Research breakdown for {topic}")
+            if not queries:
+                raise ValueError("Groq returned an empty query list in response JSON.")
         except Exception as e:
-            logger.warning(f"Error parsing LLM breakdown response: {e}. Using fallback queries.")
-            subtopics = [f"Foundations of {topic}", f"Impact of {topic}", f"Challenges in {topic}"]
-            queries = [
-                SearchQuery(query=f"{topic} overview architecture", aspect="Foundations", rationale="Core concepts"),
-                SearchQuery(query=f"{topic} industry adoption trends", aspect="Impact", rationale="Current market adoption"),
-                SearchQuery(query=f"{topic} challenges limitations risks", aspect="Challenges", rationale="Controversies and bottlenecks")
-            ]
-            preliminary_summary = f"Exploration covering foundations, impact, and critical challenges for {topic}."
+            raise RuntimeError(f"Research Agent failed to process Groq breakdown: {e}") from e
+
+        # Bounded query planning (enforcing MAX_SEARCH_QUERIES limit)
+        bounded_queries = queries[:settings.MAX_SEARCH_QUERIES]
 
         self._notify(
             "Query Generation",
-            f"Formulated {len(queries)} targeted queries across {len(subtopics)} dimensions.",
+            f"Formulated {len(bounded_queries)} targeted queries across {len(subtopics)} dimensions.",
             status="running",
-            data={"queries": [q.query for q in queries], "subtopics": subtopics}
+            data={"queries": [q.query for q in bounded_queries], "subtopics": subtopics}
         )
 
         # Step 2: Source Discovery & Gathering
-        self._notify("Web Search", f"Executing web searches across {len(queries)} inquiry facets...", status="running")
+        self._notify("Web Search", f"Executing web searches across {len(bounded_queries)} inquiry facets...", status="running")
         raw_documents: List[SourceDocument] = []
         seen_urls = set()
 
-        for q in queries:
+        for q in bounded_queries:
             logger.info(f"Executing search query: {q.query}")
-            results = search_tool.search(q.query, max_results=settings.MAX_RESULTS_PER_QUERY)
-            for doc in results:
-                if doc.url not in seen_urls:
-                    seen_urls.add(doc.url)
-                    raw_documents.append(doc)
+            results = search_tool.search(q.query, max_results=settings.MAX_RESULTS_PER_QUERY, seen_urls=seen_urls)
+            raw_documents.extend(results)
 
         # Step 3: Re-index and Deduplicate Sources
         curated_sources: List[SourceDocument] = []
