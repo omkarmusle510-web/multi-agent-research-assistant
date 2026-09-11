@@ -2,10 +2,11 @@
 
 Role: EVIDENCE SYNTHESIZER
 - Receives AnalysisPacket AND ResearchPacket (via Orchestrator)
-- Synthesizes analyzed evidence into a coherent, structured research report
-- Writes executive summary, thematic sections, conclusions, and recommendations
+- Treats AnalysisPacket as the primary analytical input
+- Produces a concise, evidence-first research briefing (not academic prose)
 - PRESERVES citation integrity: all [S1], [S2] references map to real SourceDocuments
 - VALIDATES all citations against the ResearchPacket source IDs
+- Does NOT invent facts beyond AnalysisPacket + ResearchPacket
 - Does NOT search for new information — that was the Research Agent's job
 - Does NOT re-analyze — that was the Analysis Agent's job
 """
@@ -85,13 +86,22 @@ class ReportAgent:
         return validated_sections
 
     def run(self, analysis: AnalysisPacket, research: ResearchPacket) -> FinalReport:
-        """Synthesize analysis and research into a comprehensive FinalReport.
+        """Synthesize analysis and research into a concise FinalReport briefing.
 
         Pipeline:
             1. Build context from AnalysisPacket findings/conflicts and ResearchPacket sources
-            2. [Groq call] Generate structured report with executive summary and sections
+            2. [Groq call] Generate evidence-first briefing mapped onto FinalReport fields
             3. [Local] Validate all citations against ResearchPacket source IDs
             4. Package into FinalReport with source bibliography
+
+        Field mapping (existing FinalReport contract preserved):
+            executive_summary -> Bottom Line
+            key_findings      -> Key Evidence
+            sections          -> Consensus + Why Results Differ
+            conflict_analysis -> Where the Evidence Conflicts (from AnalysisPacket)
+            conclusions       -> Practical Takeaway
+            recommendations   -> Recommendations (optional)
+            sources           -> Sources
 
         Args:
             analysis: AnalysisPacket produced by the Analysis Agent.
@@ -103,10 +113,10 @@ class ReportAgent:
         Raises:
             RuntimeError: If Groq fails or returns empty report structure.
         """
-        logger.info(f"Report Agent drafting final report for: {analysis.topic}")
+        logger.info(f"Report Agent drafting briefing for: {analysis.topic}")
         self._notify(
             "Started",
-            f"Report Agent activated: synthesizing report for '{analysis.topic}'",
+            f"Report Agent activated: drafting evidence-first briefing for '{analysis.topic}'",
             status="started"
         )
 
@@ -156,51 +166,101 @@ class ReportAgent:
         # ── Step 2: Report Synthesis (ONE Groq call) ──
         self._notify(
             "Synthesizing",
-            "Generating executive summary, report sections, and recommendations...",
+            "Drafting evidence-first briefing: bottom line, key evidence, consensus, and takeaways...",
             status="running"
         )
 
-        prompt = f"""You are a Research Report Writer. Your ONLY job is to synthesize pre-analyzed evidence into a clear, structured research report. You do NOT search for new information or re-analyze — you write the final narrative.
+        prompt = f"""You are a Research Briefing Writer. Your ONLY job is to turn pre-analyzed evidence into a concise, decision-friendly research briefing that is easy to scan in 30–60 seconds. You do NOT search for new information. You do NOT invent facts. You do NOT re-analyze beyond what the AnalysisPacket already established.
 
-Topic: "{analysis.topic}"
+Topic / user question: "{analysis.topic}"
 
-ANALYZED FINDINGS:
+PRIMARY INPUT — ANALYZED FINDINGS (AnalysisPacket):
 {findings_block}
 
-IDENTIFIED CONFLICTS:
+PRIMARY INPUT — IDENTIFIED CONFLICTS (AnalysisPacket):
 {conflicts_block}
 
-KEY TAKEAWAYS FROM ANALYSIS:
+PRIMARY INPUT — KEY TAKEAWAYS (AnalysisPacket):
 {chr(10).join(['- ' + t for t in analysis.key_takeaways])}
 
-SOURCE BIBLIOGRAPHY (cite using bracket notation like [S1], [S2]):
+SOURCE BIBLIOGRAPHY (cite with [S1], [S2], etc.):
 {source_ref_block}
 
-CRITICAL CITATION RULE: You may ONLY reference source IDs from this exact set: [{available_ids}]. Do NOT invent sources. Every [Sn] citation in your text must match one of these real sources.
+CRITICAL EVIDENCE RULES:
+- Treat the AnalysisPacket above as the primary analytical input.
+- Every factual claim MUST be supported by AnalysisPacket and/or ResearchPacket sources.
+- Cite only these source IDs: [{available_ids}]. Never invent IDs or URLs.
+- Do NOT fabricate statistics, percentages, study results, or quotes.
+- Prefer specific numbers/facts from the analysis when present; otherwise keep claims qualitative and cited.
+- Distinguish CONSENSUS from CONFLICTING EVIDENCE from CONTEXTUAL DIFFERENCES.
+- NEVER describe conflicting evidence as unanimous consensus.
+- If sources disagree, surface the disagreement explicitly. Do not suppress minority/contradictory findings.
 
-Write a complete research report containing:
-1. EXECUTIVE SUMMARY: 1-2 paragraph synthesis of the current state, opportunities, and risks
-2. SECTIONS: 3 thematic sections with detailed prose and bracket citations [S1], [S2], etc.
-3. KEY FINDINGS: 3-5 concise bullet points of the most important facts
-4. CONCLUSIONS: 2-3 definitive summary conclusions
-5. RECOMMENDATIONS: 3 actionable recommendations for practitioners
+STYLE:
+- Concise bullets and short paragraphs. No academic wall of text.
+- No filler, no generic AI language, no repeating the same conclusion.
+- Answer: "What should I know after reading this?"
+
+Map the briefing into this JSON (existing FinalReport fields):
+
+1) executive_summary = BOTTOM LINE
+   - 1–3 concise sentences that directly answer the user's question.
+
+2) key_findings = KEY EVIDENCE
+   - 3–6 compact evidence-backed findings.
+   - Each finding: one crisp line with the important number/fact when available, plus source IDs in brackets.
+   - Good examples:
+     - "+26% developers completed more tasks [S1]"
+     - "Experienced developers took 19% longer on complex tasks [S3]"
+   - Do not invent numbers.
+
+3) sections = exactly these two sections (use these exact headings):
+   a) "What the Evidence Agrees On"
+      - Short bullets summarizing genuine consensus across the analyzed evidence.
+      - Cite supporting source IDs inline.
+   b) "Why the Results Differ"
+      - Explain contextual differences ONLY when supported by the AnalysisPacket
+        (task type, experience level, study design, environment, tool/model differences, etc.).
+      - If the analysis does not support contextual explanations, say so briefly — do not invent.
+      - Keep this short.
+
+   Do NOT add a separate conflicts section here — conflicts are rendered from structured conflict_analysis.
+
+4) conclusions = PRACTICAL TAKEAWAY
+   - 1–3 short bullets: what the evidence means for the user.
+
+5) recommendations = RECOMMENDATIONS
+   - Include ONLY if the user's question reasonably calls for advice/actions.
+   - If recommendations are not appropriate, return an empty list [].
+   - When included: 2–4 concise, evidence-grounded recommendations with citations where relevant.
 
 Respond strictly with valid JSON conforming to this exact schema:
 {{
-  "executive_summary": "Executive summary text...",
+  "executive_summary": "1-3 sentence bottom-line answer...",
   "sections": [
     {{
-      "heading": "Section Title",
-      "content": "Section body with inline citations [S1], [S2]...",
+      "heading": "What the Evidence Agrees On",
+      "content": "- Consensus point with citations [S1]\\n- Another consensus point [S2]",
       "citations": ["S1", "S2"]
+    }},
+    {{
+      "heading": "Why the Results Differ",
+      "content": "- Contextual difference explained from analysis [S1][S3]\\n- Or a brief note if context is unclear",
+      "citations": ["S1", "S3"]
     }}
   ],
-  "key_findings": ["Finding 1", "Finding 2", "Finding 3"],
-  "conclusions": ["Conclusion 1", "Conclusion 2"],
-  "recommendations": ["Recommendation 1", "Recommendation 2", "Recommendation 3"]
+  "key_findings": [
+    "Compact evidence finding with fact/number [S1]",
+    "Another compact evidence finding [S2]"
+  ],
+  "conclusions": [
+    "Practical takeaway 1",
+    "Practical takeaway 2"
+  ],
+  "recommendations": []
 }}"""
 
-        response_raw = llm_client.complete(prompt, json_mode=True)
+        response_raw = llm_client.complete(prompt, json_mode=True, max_tokens=900)
 
         # ── Step 3: Parse and Validate Citations ──
         self._notify(
@@ -242,7 +302,10 @@ Respond strictly with valid JSON conforming to this exact schema:
             recommendations = parsed.get("recommendations", [])
 
             if not exec_summary:
-                raise ValueError("Groq returned report JSON without an executive summary.")
+                raise ValueError("Groq returned report JSON without a bottom-line summary.")
+
+            # Normalize recommendations: omit empty/whitespace-only items
+            recommendations = [r.strip() for r in recommendations if isinstance(r, str) and r.strip()]
 
         except json.JSONDecodeError as e:
             raise RuntimeError(

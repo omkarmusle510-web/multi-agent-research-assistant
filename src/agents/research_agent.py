@@ -89,7 +89,7 @@ Respond strictly with valid JSON conforming to this exact schema:
   "summary": "One-sentence overview of the research scope"
 }}"""
 
-        response_raw = llm_client.complete(prompt, json_mode=True)
+        response_raw = llm_client.complete(prompt, json_mode=True, max_tokens=800)
 
         subtopics: List[str] = []
         queries: List[SearchQuery] = []

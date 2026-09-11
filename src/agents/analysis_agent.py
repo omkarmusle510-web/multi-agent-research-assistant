@@ -166,7 +166,7 @@ Respond strictly with valid JSON conforming to this exact schema:
   ]
 }}"""
 
-        response_raw = llm_client.complete(prompt, json_mode=True)
+        response_raw = llm_client.complete(prompt, json_mode=True, max_tokens=900)
 
         # ── Step 3: Parse and Validate Citations ──
         self._notify(

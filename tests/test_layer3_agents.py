@@ -234,15 +234,14 @@ def test_5_report_agent(analysis: AnalysisPacket, research: ResearchPacket):
                 f"Valid IDs: {sorted(valid_ids)}"
             )
 
-    # Must have conclusions and recommendations
-    assert len(report.conclusions) >= 1, "Expected at least 1 conclusion"
-    assert len(report.recommendations) >= 1, "Expected at least 1 recommendation"
+    # Must have practical takeaway; recommendations are optional (question-dependent)
+    assert len(report.conclusions) >= 1, "Expected at least 1 practical takeaway"
 
     # Criterion 12: Markdown renders with citation references
     assert report.markdown_content is not None, "Markdown content not pre-rendered"
     assert len(report.markdown_content) > 200, "Markdown content too short"
-    assert "## Executive Summary" in report.markdown_content, "Missing Executive Summary heading"
-    assert "## References" in report.markdown_content, "Missing References section"
+    assert "## Bottom Line" in report.markdown_content, "Missing Bottom Line heading"
+    assert "## Sources" in report.markdown_content, "Missing Sources section"
 
     # Verify at least some source IDs appear in markdown
     bracket_pattern = re.compile(r'\[S\d+\]')

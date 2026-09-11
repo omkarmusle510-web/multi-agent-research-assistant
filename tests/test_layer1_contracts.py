@@ -264,13 +264,13 @@ def test_final_report_markdown_and_citations(fr):
     md = fr.to_markdown()
     assert isinstance(md, str)
     assert len(md) > 100
-    assert f"# Research Dossier: {fr.topic}" in md
-    assert "## Executive Summary" in md
-    assert "## Key Findings" in md
-    assert "## Conflict & Disagreement Analysis" in md
-    assert "## Conclusions" in md
-    assert "## Strategic Recommendations" in md
-    assert "## References & Sources" in md
+    assert f"# Research Briefing: {fr.topic}" in md
+    assert "## Bottom Line" in md
+    assert "## Key Evidence" in md
+    assert "## Where the Evidence Conflicts" in md
+    assert "## Practical Takeaway" in md
+    assert "## Recommendations" in md
+    assert "## Sources" in md
 
     # Verify critical source rule: [S1], [S2] must map back to actual URLs collected
     for src in fr.sources:
