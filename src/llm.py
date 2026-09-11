@@ -16,10 +16,8 @@ class LLMClient:
     """Provides unified LLM completions with structured JSON parsing and intelligent fallback."""
 
     def __init__(self):
-        self.provider = settings.LLM_PROVIDER
-        self.model = settings.OPENAI_MODEL
-        self.api_key = settings.OPENAI_API_KEY
-        self.base_url = settings.OPENAI_BASE_URL or "https://api.openai.com/v1"
+        self.model = settings.GROQ_MODEL
+        self.api_key = settings.GROQ_API_KEY
 
     def complete(
         self,
@@ -28,12 +26,12 @@ class LLMClient:
         json_mode: bool = False,
         temperature: float = 0.3,
     ) -> str:
-        """Generate text completion from live LLM or offline reasoning fallback."""
-        if settings.is_live_llm_available():
+        """Generate text completion from live Groq LLM or offline reasoning fallback."""
+        if settings.has_groq_credentials:
             try:
                 return self._call_live_llm(prompt, system_prompt, json_mode, temperature)
             except Exception as e:
-                logger.warning(f"Live LLM call failed ({e}), falling back to offline synthesizer.")
+                logger.warning(f"Live Groq call failed ({e}), falling back to offline synthesizer.")
 
         return self._mock_reasoning(prompt, json_mode)
 
@@ -73,48 +71,70 @@ class LLMClient:
 
     def _mock_reasoning(self, prompt: str, json_mode: bool) -> str:
         """Intelligent offline rule-based reasoning engine for seamless offline execution."""
-        # Extract prompt context
         lower_prompt = prompt.lower()
 
-        # Check if research breakdown requested
-        if "breakdown" in lower_prompt or "queries" in lower_prompt or "subtopics" in lower_prompt:
+        # 1. Check if report synthesis requested (check this first as report prompt contains analysis context)
+        if "report" in lower_prompt or "dossier" in lower_prompt or "principal research director" in lower_prompt:
             topic_match = re.search(r"topic:\s*['\"]?([^'\"\n]+)", prompt, re.IGNORECASE)
-            topic = topic_match.group(1).strip() if topic_match else "Selected Subject"
+            topic = topic_match.group(1).strip() if topic_match else "The Selected Topic"
             
             mock_data = {
-                "subtopics": [
-                    f"Core Technical Architecture & Foundations of {topic}",
-                    f"Market Adoption, Industry Impact & Economic Viability",
-                    f"Regulatory, Safety, and Ethical Implications",
-                    f"Current Bottlenecks and Emerging Future Trends"
-                ],
-                "queries": [
+                "executive_summary": (
+                    f"This comprehensive research dossier examines the current technological underpinnings, "
+                    f"market viability, and strategic trajectory of {topic}. Synthesizing multi-source empirical literature "
+                    f"and recent field deployments, the findings indicate that {topic} has transitioned from foundational "
+                    f"prototyping into accelerated enterprise evaluation. While significant performance multipliers have been "
+                    f"corroborated, critical friction points regarding scalability, standardization, and regulatory governance "
+                    f"remain central to stakeholder decision-making."
+                ),
+                "sections": [
                     {
-                        "query": f"{topic} technical mechanisms and architecture",
-                        "aspect": "Technical Foundations",
-                        "rationale": "Understand core underlying mechanisms and specifications."
+                        "heading": "Technological Architecture & Empirical Capabilities",
+                        "content": (
+                            f"Recent advancements in {topic} demonstrate marked performance and reliability improvements. "
+                            f"Benchmark testing demonstrates elevated efficiency and operational throughput compared to prior paradigms [S1]. "
+                            f"Organizations deploying modern reference architectures report lower error rates and enhanced composability, "
+                            f"though integration friction with legacy systems remains an active engineering consideration [S2]."
+                        ),
+                        "citations": ["S1", "S2"]
                     },
                     {
-                        "query": f"{topic} market growth industry adoption benchmark",
-                        "aspect": "Market & Industry Impact",
-                        "rationale": "Quantify current adoption rate and commercial impact."
+                        "heading": "Market Adoption Dynamics & Economic Feasibility",
+                        "content": (
+                            f"Commercial adoption curves for {topic} indicate accelerating momentum across primary industry verticals. "
+                            f"Total cost of ownership models project positive return on investment within 12 to 18 months of deployment [S1]. "
+                            f"However, capital allocation requirements and specialized talent shortages continue to present notable entry barriers [S3]."
+                        ),
+                        "citations": ["S1", "S3"]
                     },
                     {
-                        "query": f"{topic} risks limitations challenges criticisms",
-                        "aspect": "Challenges & Contradictions",
-                        "rationale": "Identify key failure modes, bottlenecks, and disputed viewpoints."
-                    },
-                    {
-                        "query": f"{topic} future roadmap breakthrough innovations",
-                        "aspect": "Future Roadmap",
-                        "rationale": "Assess trajectory and projected advancements over the next 3-5 years."
+                        "heading": "Governance, Risk & Standardization Landscape",
+                        "content": (
+                            f"Regulatory compliance and standardization constitute the most debated operational aspects of {topic}. "
+                            f"Divergence in jurisdictional oversight has prompted industry consortia to propose unified testing protocols [S2, S3]. "
+                            f"Proactive risk management and continuous validation frameworks are widely recommended to prevent compliance latency."
+                        ),
+                        "citations": ["S2", "S3"]
                     }
                 ],
-                "summary": f"Initial research breakdown for {topic} encompassing architecture, commercialization, challenges, and future trajectory."
+                "key_findings": [
+                    f"Empirical validation confirms technical readiness of {topic} across standard operational environments.",
+                    "Commercial ROI models demonstrate robust capital payback inside an 18-month deployment window.",
+                    "Timeline controversies persist between rapid enterprise pilot adoption and regulated safety certification."
+                ],
+                "conclusions": [
+                    f"{topic} represents a high-leverage technological frontier with lasting strategic value.",
+                    "Successful scaling requires cross-functional alignment between engineering execution and regulatory foresight."
+                ],
+                "recommendations": [
+                    "Institute phased pilot programs targeted at high-impact, measurable workflows.",
+                    "Establish standardized auditing and verification pipelines prior to wide-scale deployment.",
+                    "Form cross-industry working groups to harmonize regulatory and compliance roadmaps."
+                ]
             }
             return json.dumps(mock_data, indent=2)
 
-        # Check if analysis / claim extraction requested
+        # 2. Check if analysis / claim extraction requested
         if "analysis" in lower_prompt or "claims" in lower_prompt or "conflict" in lower_prompt:
             topic_match = re.search(r"topic:\s*['\"]?([^'\"\n]+)", prompt, re.IGNORECASE)
             topic = topic_match.group(1).strip() if topic_match else "The Topic"
@@ -174,63 +194,41 @@ class LLMClient:
             }
             return json.dumps(mock_data, indent=2)
 
-        # Check if report synthesis requested
-        if "report" in lower_prompt or "dossier" in lower_prompt or "synthesis" in lower_prompt:
+        # 3. Check if research breakdown requested
+        if "breakdown" in lower_prompt or "queries" in lower_prompt or "subtopics" in lower_prompt:
             topic_match = re.search(r"topic:\s*['\"]?([^'\"\n]+)", prompt, re.IGNORECASE)
             topic = topic_match.group(1).strip() if topic_match else "The Topic"
             
             mock_data = {
-                "executive_summary": (
-                    f"This comprehensive research dossier examines the current state, technological underpinnings, "
-                    f"and strategic trajectory of {topic}. Drawing from multi-source empirical literature and industry benchmarks, "
-                    f"the findings indicate that {topic} is undergoing a pivotal transition from foundational validation into widespread "
-                    f"operational deployment. While significant efficiency multipliers have been proven, key friction points regarding "
-                    f"scalability, integration latency, and regulatory governance remain active areas of stakeholder debate."
-                ),
-                "sections": [
+                "subtopics": [
+                    f"Core Technical Architecture & Foundations of {topic}",
+                    f"Market Adoption, Industry Impact & Economic Viability",
+                    f"Regulatory, Safety, and Ethical Implications",
+                    f"Current Bottlenecks and Emerging Future Trends"
+                ],
+                "queries": [
                     {
-                        "heading": "State of the Technology & Technical Foundations",
-                        "content": (
-                            f"Recent developments in {topic} reflect marked architectural maturation. Empirical testing demonstrates "
-                            f"elevated reliability and throughput compared to prior paradigms. Organizations deploying modern architectures "
-                            f"report lower error rates and enhanced composability across modular systems."
-                        ),
-                        "citations": ["S1", "S2"]
+                        "query": f"{topic} technical mechanisms and architecture",
+                        "aspect": "Technical Foundations",
+                        "rationale": "Understand core underlying mechanisms and specifications."
                     },
                     {
-                        "heading": "Market Dynamics & Economic Impact",
-                        "content": (
-                            f"Adoption curves for {topic} indicate accelerating interest across key industry sectors. "
-                            f"Cost-benefit projections suggest measurable productivity returns, with early adopters realizing operational "
-                            f"paybacks inside an 18-month horizon. However, upfront capital expenditure and talent specialization requirements "
-                            f"continue to present headwinds for smaller-scale entrants."
-                        ),
-                        "citations": ["S1", "S3"]
+                        "query": f"{topic} market growth industry adoption benchmark",
+                        "aspect": "Market & Industry Impact",
+                        "rationale": "Quantify current adoption rate and commercial impact."
                     },
                     {
-                        "heading": "Governance, Risk, and Emerging Challenges",
-                        "content": (
-                            f"Safety, standardization, and ethical oversight dominate current regulatory discourse surrounding {topic}. "
-                            f"Disparities in compliance requirements across jurisdictions have created friction, motivating calls for unified "
-                            f"best-practice guidelines and transparent verification protocols."
-                        ),
-                        "citations": ["S2", "S3"]
+                        "query": f"{topic} risks limitations challenges criticisms",
+                        "aspect": "Challenges & Contradictions",
+                        "rationale": "Identify key failure modes, bottlenecks, and disputed viewpoints."
+                    },
+                    {
+                        "query": f"{topic} future roadmap breakthrough innovations",
+                        "aspect": "Future Roadmap",
+                        "rationale": "Assess trajectory and projected advancements over the next 3-5 years."
                     }
                 ],
-                "key_findings": [
-                    f"Technological feasibility for {topic} is confirmed with high confidence across validated benchmarks.",
-                    "Commercial momentum is strong, driven by quantifiable performance and automation advantages.",
-                    "Divergent stakeholder projections highlight a 2-year vs 5-year timeline gap regarding full mainstream saturation."
-                ],
-                "conclusions": [
-                    f"{topic} represents a high-impact frontier with enduring strategic significance.",
-                    "Success is contingent upon mitigating deployment friction and maintaining rigorous verification benchmarks."
-                ],
-                "recommendations": [
-                    "Institute pilot validation programs focused on measurable, high-leverage sub-domains.",
-                    "Establish clear risk-mitigation protocols and proactive regulatory compliance roadmaps.",
-                    "Invest in cross-disciplinary training to bridge technical implementation and domain governance."
-                ]
+                "summary": f"Initial research breakdown for {topic} encompassing architecture, commercialization, challenges, and future trajectory."
             }
             return json.dumps(mock_data, indent=2)
 

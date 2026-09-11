@@ -50,3 +50,4 @@ Tracking development progress, implementation milestones, and future roadmap cap
 - [ ] **Dynamic Agent Reflection Loops**: Add a critique agent to review the draft report and request additional queries if evidence is sparse.
 - [ ] **Interactive Visualizations**: Generate inline Plotly charts or timelines based on the extracted quantitative claims.
 - [ ] **Multi-Format Export**: Add direct PDF compilation via ReportLab or WeasyPrint.
+

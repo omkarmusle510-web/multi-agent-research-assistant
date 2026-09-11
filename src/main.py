@@ -12,6 +12,15 @@ project_root = Path(__file__).resolve().parent.parent
 if str(project_root) not in sys.path:
     sys.path.insert(0, str(project_root))
 
+if sys.platform == "win32":
+    try:
+        if hasattr(sys.stdout, "reconfigure"):
+            sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+        if hasattr(sys.stderr, "reconfigure"):
+            sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
+
 from src.config import settings
 from src.models import AgentEvent
 from src.orchestrator import ResearchOrchestrator
@@ -47,19 +56,19 @@ AGENT_COLORS = {
 def print_cli_event(event: AgentEvent):
     """Print beautifully styled live progress updates in the terminal."""
     color = AGENT_COLORS.get(event.agent, BOLD)
-    status_icon = "✓" if event.status == "completed" else "→"
+    status_icon = "[OK]" if event.status == "completed" else "->"
     if event.status == "error":
-        status_icon = "✗"
+        status_icon = "[ERR]"
     
     prefix = f"{color}[{event.agent}]{RESET} {status_icon} {BOLD}{event.step}:{RESET}"
     print(f"{prefix} {event.message}")
     
     if event.data and "queries" in event.data:
         for q in event.data["queries"]:
-            print(f"    {YELLOW}• Query:{RESET} {q}")
+            print(f"    {YELLOW}* Query:{RESET} {q}")
     if event.data and "takeaways" in event.data:
         for t in event.data["takeaways"]:
-            print(f"    {GREEN}• Key Takeaway:{RESET} {t}")
+            print(f"    {GREEN}* Key Takeaway:{RESET} {t}")
 
 
 def main():
@@ -114,20 +123,11 @@ def main():
     args = parser.parse_args()
     setup_logging(args.verbose)
 
-    # Handle provider overrides
-    if args.mock:
-        settings.LLM_PROVIDER = "mock"
-        settings.SEARCH_PROVIDER = "mock"
-    if args.provider:
-        settings.LLM_PROVIDER = args.provider
-    if args.search:
-        settings.SEARCH_PROVIDER = args.search
-
     # Determine topic
     topic = args.topic or args.topic_flag
     if not topic:
         print(f"\n{BOLD}{CYAN}=== Multi-Agent Research Assistant ==={RESET}")
-        print("Agents: Research Agent ➔ Analysis Agent ➔ Report Agent\n")
+        print("Agents: Research Agent -> Analysis Agent -> Report Agent\n")
         try:
             topic_input = input("Enter research topic [Default: 'Solid-State Batteries vs Lithium-Ion']: ").strip()
             topic = topic_input if topic_input else "Solid-State Batteries vs Lithium-Ion"
@@ -136,7 +136,7 @@ def main():
             sys.exit(0)
 
     print(f"\n{BOLD}Research Topic:{RESET} {CYAN}{topic}{RESET}")
-    print(f"{BOLD}LLM Provider:{RESET} {settings.LLM_PROVIDER} | {BOLD}Search Provider:{RESET} {settings.SEARCH_PROVIDER}\n")
+    print(f"{BOLD}LLM Model:{RESET} {settings.GROQ_MODEL} | {BOLD}Search Provider:{RESET} Tavily\n")
     print(f"{'-' * 60}\n")
 
     orchestrator = ResearchOrchestrator(on_event=print_cli_event)
@@ -151,16 +151,16 @@ def main():
         sys.exit(1)
 
     print(f"\n{'-' * 60}")
-    print(f"{BOLD}{GREEN}✓ Research Pipeline Completed Successfully!{RESET}\n")
+    print(f"{BOLD}{GREEN}[OK] Research Pipeline Completed Successfully!{RESET}\n")
 
     if args.json:
         print(json.dumps(report.model_dump(), indent=2))
     else:
         print(f"{BOLD}Report Highlights:{RESET}")
-        print(f"• Executive Summary length: {len(report.executive_summary.split())} words")
-        print(f"• Sections generated: {len(report.sections)}")
-        print(f"• Sources cited: {len(report.sources)}")
-        print(f"• Conflicts identified: {len(report.conflict_analysis)}")
+        print(f"* Executive Summary length: {len(report.executive_summary.split())} words")
+        print(f"* Sections generated: {len(report.sections)}")
+        print(f"* Sources cited: {len(report.sources)}")
+        print(f"* Conflicts identified: {len(report.conflict_analysis)}")
         print(f"\n{BOLD}Saved Dossier Location:{RESET} {args.output or settings.OUTPUT_DIR}")
 
 

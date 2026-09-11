@@ -16,7 +16,6 @@ class WebSearchTool:
     """Multi-backend web search tool supporting DuckDuckGo, Tavily, and intelligent simulation."""
 
     def __init__(self):
-        self.provider = settings.SEARCH_PROVIDER
         self.tavily_api_key = settings.TAVILY_API_KEY
         self.headers = {
             "User-Agent": (
@@ -30,8 +29,8 @@ class WebSearchTool:
         """Search the web for query and return structured SourceDocuments."""
         limit = max_results or settings.MAX_RESULTS_PER_QUERY
 
-        # 1. Try Tavily if configured
-        if self.provider == "tavily" and self.tavily_api_key:
+        # 1. Try Tavily (intended provider) if configured
+        if settings.has_tavily_credentials:
             try:
                 results = self._search_tavily(query, limit)
                 if results:
@@ -39,14 +38,13 @@ class WebSearchTool:
             except Exception as e:
                 logger.warning(f"Tavily search error ({e}), falling back.")
 
-        # 2. Try DuckDuckGo if enabled
-        if self.provider in ("duckduckgo", "ddg"):
-            try:
-                results = self._search_duckduckgo(query, limit)
-                if results:
-                    return results
-            except Exception as e:
-                logger.warning(f"DuckDuckGo search error ({e}), falling back.")
+        # 2. Fallback search / simulation
+        try:
+            results = self._search_duckduckgo(query, limit)
+            if results:
+                return results
+        except Exception as e:
+            logger.warning(f"DuckDuckGo search error ({e}), falling back.")
 
         # 3. Resilient simulated search results for offline/testing/demo
         return self._simulate_search_results(query, limit)
@@ -188,3 +186,4 @@ class WebSearchTool:
 
 # Singleton search tool
 search_tool = WebSearchTool()
+

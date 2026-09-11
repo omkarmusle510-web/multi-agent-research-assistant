@@ -166,3 +166,4 @@ To ensure zero friction during local development, offline evaluations, and demos
 The orchestrator and all agents accept an optional `on_event: Callable[[AgentEvent], None]` callback:
 - Emits structured events (`agent`, `step`, `status`, `message`, `data`).
 - Both the Streamlit dashboard (`src/ui/app.py`) and the CLI (`src/main.py`) subscribe to these events for real-time visual progress indication and intermediate artifact inspection.
+

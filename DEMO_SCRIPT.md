@@ -103,3 +103,4 @@ During the demo, verify that each requirement from `PROJECT_CONTEXT.md` is met:
 - [x] **Analysis Agent**: Compares sources, identifies findings, detects conflicts, assesses evidence.
 - [x] **Report Agent**: Synthesizes findings, executive summary, key findings, evidence/citations, conclusion.
 - [x] **Orchestrator**: Coordinates all three agents and handles state transitions cleanly.
+

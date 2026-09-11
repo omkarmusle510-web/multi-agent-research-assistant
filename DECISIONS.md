@@ -85,3 +85,4 @@ Build the web UI using **Streamlit** (`src/ui/app.py`) featuring dedicated inspe
 ### Consequences
 - **Positive**: Total transparency into inter-agent handoffs; non-technical users can interact effortlessly via preset topics and download buttons.
 - **Trade-off**: Streamlit redraws script on interaction; managed efficiently via `st.session_state`.
+
