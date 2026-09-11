@@ -1,11 +1,13 @@
 # System Architecture: Multi-Agent Research Assistant
 
+This document outlines the architectural design, agent interaction protocols, data contracts, and implementation specifications for the **Multi-Agent Research Assistant**.
 This document outlines the architectural specifications, agent interaction protocols, data contracts, and citation validation mechanics for the **Multi-Agent Research Assistant**.
 
 ---
 
 ## 1. System Overview
 
+The Multi-Agent Research Assistant is an autonomous, multi-agent intelligence platform designed to decompose complex inquiry topics, execute multi-source external web investigations, rigorously cross-examine claims and contradictions, and synthesize publication-ready research dossiers with inline citations.
 The Multi-Agent Research Assistant is an autonomous multi-agent intelligence platform designed to transform an open-ended research question into an executive-ready, citation-backed research dossier. 
 
 Rather than relying on a single monolithic LLM prompt, the system segregates responsibilities across three isolated agents governed by a centralized Orchestrator:
@@ -25,6 +27,22 @@ Rather than relying on a single monolithic LLM prompt, the system segregates res
 ## 2. End-to-End Orchestrated Pipeline Flow
 
 ```mermaid
+flowchart TD
+    User([User / UI / CLI]) -->|Topic Request| Orchestrator[Research Orchestrator]
+    
+    subgraph Pipeline [Multi-Agent Execution Pipeline]
+        Orchestrator -->|1. Topic| ResearchAgent[1. Research Agent]
+        ResearchAgent -->|Decompose Topic & Formulate Queries| SearchTool[Web Search Tool]
+        SearchTool -->|DuckDuckGo / Tavily / Scraping| Web[(Live Web / Sources)]
+        Web -->|Raw Source Documents| SearchTool
+        SearchTool -->|Curated Sources S1..Sn| ResearchAgent
+        
+        ResearchAgent -->|ResearchPacket| AnalysisAgent[2. Analysis Agent]
+        
+        AnalysisAgent -->|Cross-examine Sources & Detect Conflicts| AnalysisAgent
+        AnalysisAgent -->|AnalysisPacket| ReportAgent[3. Report Agent]
+        
+        ReportAgent -->|Synthesize Dossier & Bracket Citations| ReportAgent
 sequenceDiagram
     autonumber
     actor User as User / UI
@@ -49,6 +67,8 @@ sequenceDiagram
     Note over RA: URL Deduplication & Indexing S1..Sn<br/>Emit: Searching & Indexing<br/>Emit: Completed
     RA-->>Orch: ResearchPacket (Sources, Queries, Summary)
 
+    ReportAgent -->|FinalReport| Orchestrator
+    Orchestrator -->|Event Stream / Dossier| User
     Note over Orch: Emit: Handoff 1 (ResearchPacket -> Analysis)
     Orch->>AA: run(research_packet)
     Note over AA: Emit: Started<br/>Emit: Preparing Context<br/>Emit: Analyzing
@@ -69,10 +89,24 @@ sequenceDiagram
 
 ---
 
+## 2. Agent Responsibilities & Protocols
 ## 3. The 22-Stage Event Stream & Visible Handoffs
 
+### A. Orchestrator (`src/orchestrator.py`)
+- **Role**: Coordinates pipeline progression, manages intermediate states, logs progress, and emits event callbacks for UI streaming.
+- **Inputs**: User research prompt (`str`), execution parameters (`save_output`, `output_path`).
+- **Outputs**: `FinalReport` object and saved Markdown dossier on disk (`./reports/`).
+- **Guarantees**: Enforces sequential integrity: ensures `ResearchPacket` is validated before triggering `Analysis Agent`, and validates `AnalysisPacket` before invoking `Report Agent`.
 The Orchestrator and agents record every execution phase into an ordered list of typed `AgentEvent` objects. A standard complete run produces the following 22-stage event stream:
 
+### B. 1. Research Agent (`src/agents/research_agent.py`)
+- **Role**: Dissects abstract queries into actionable investigative angles and retrieves corroborating sources.
+- **Key Tasks**:
+  1. Breaks the query into 3–4 thematic dimensions (Technical foundations, Market adoption, Regulatory challenges, Future outlook).
+  2. Formulates precise search queries for each dimension.
+  3. Queries external web backends via `WebSearchTool`.
+  4. Deduplicates URLs, scores source relevance, and assigns deterministic source identifiers (`[S1]`, `[S2]`, ...).
+- **Data Contract Produced**: `ResearchPacket`.
 | # | Emitter | Step Name | Status | Purpose / Description |
 |---|---|---|---|---|
 | **1** | Orchestrator | Pipeline Started | `started` | Pipeline initialized with user research topic |
@@ -98,8 +132,25 @@ The Orchestrator and agents record every execution phase into an ordered list of
 | **21** | Orchestrator | Report Produced | `running` | Validating dossier metrics & persisting to disk |
 | **22** | Orchestrator | Pipeline Complete | `completed` | Full workflow finished successfully |
 
+### C. 2. Analysis Agent (`src/agents/analysis_agent.py`)
+- **Role**: Cross-references raw sources to extract substantiated claims, grade confidence, and identify opposing viewpoints.
+- **Key Tasks**:
+  1. Corroborates claims across multiple sources.
+  2. Detects explicit conflicts or disputed projections (e.g., rapid commercialization timelines vs regulatory stagnation).
+  3. Evaluates evidence quality and assigns confidence levels (`High`, `Medium`, `Low`).
+  4. Formulates core strategic takeaways.
+- **Data Contract Produced**: `AnalysisPacket`.
 ---
 
+### D. 3. Report Agent (`src/agents/report_agent.py`)
+- **Role**: Synthesizes verified findings and source bibliographies into an executive research dossier.
+- **Key Tasks**:
+  1. Drafts a high-impact Executive Summary.
+  2. Generates thematic analysis sections incorporating bracket citations (e.g., `[S1]`, `[S2]`).
+  3. Compiles a Conflict & Controversy matrix with neutral evaluations.
+  4. Formulates actionable strategic recommendations and conclusions.
+  5. Assembles a complete bibliography mapping each source ID to title, URL, snippet, and relevance rating.
+- **Data Contract Produced**: `FinalReport`.
 ## 4. Agent Specialization & Boundaries
 
 ```
@@ -155,8 +206,10 @@ The Orchestrator and agents record every execution phase into an ordered list of
 
 ---
 
+## 3. Data Contracts & Schema Specification
 ## 5. Data Contracts & Pydantic v2 Specifications
 
+All inter-agent communication is governed by typed Pydantic v2 schemas (`src/models.py`):
 All inter-agent communication is governed by typed schemas defined in `src/models.py`:
 
 ```mermaid
@@ -166,6 +219,7 @@ classDiagram
         +str title
         +str url
         +str snippet
+        +str published_date
         +Optional~str~ content
         +Optional~str~ published_date
         +float relevance_score
@@ -233,11 +287,18 @@ classDiagram
         +List~str~ conclusions
         +List~str~ recommendations
         +List~SourceDocument~ sources
+        +str to_markdown()
         +str generated_at
         +Optional~str~ markdown_content
         +to_markdown() str
     }
 
+    ResearchPacket o-- SourceDocument
+    ResearchPacket o-- SearchQuery
+    AnalysisPacket o-- Conflict
+    AnalysisPacket o-- Claim
+    FinalReport o-- SourceDocument
+    FinalReport o-- Conflict
     class AgentEvent {
         +str agent
         +str step
@@ -259,8 +320,16 @@ classDiagram
 
 ---
 
+## 4. Dual-Mode Architecture (Live API + High-Fidelity Mock)
 ## 6. Citation Integrity Architecture
 
+To ensure zero friction during local development, offline evaluations, and demos:
+1. **Live Mode**:
+   - Integrates with OpenAI-compatible APIs (OpenAI, Groq, Together, Ollama) via `src/llm.py`.
+   - Executes live searches via DuckDuckGo (HTML parser or `duckduckgo-search`) or Tavily.
+2. **Mock Mode (Built-In Fallback)**:
+   - Activated automatically if no API keys are provided or when `--mock` is flagged.
+   - Generates topic-aware decomposition, claim corroboration, conflict modeling, and citations with zero latency and zero external dependencies.
 To prevent citation hallucination, the system implements a three-tier validation mechanism:
 
 ```
@@ -296,8 +365,12 @@ To prevent citation hallucination, the system implements a three-tier validation
 
 ---
 
+## 5. Event-Driven UI Streaming
 ## 7. Resource Constraints & API Budget
 
+The orchestrator and all agents accept an optional `on_event: Callable[[AgentEvent], None]` callback:
+- Emits structured events (`agent`, `step`, `status`, `message`, `data`).
+- Both the Streamlit dashboard (`src/ui/app.py`) and the CLI (`src/main.py`) subscribe to these events for real-time visual progress indication and intermediate artifact inspection.
 | Component | Target Budget | Enforcement Mechanism |
 |---|---|---|
 | **Research Agent LLM** | Exactly 1 Groq call | `json_mode=True`, `max_tokens=800` |
